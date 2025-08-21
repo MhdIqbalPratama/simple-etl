@@ -1,5 +1,5 @@
 import re
-from datetime import datetime
+import dateparser
 import hashlib
 
 class Cleaner:
@@ -14,7 +14,7 @@ class Cleaner:
         """Remove unwanted characters from title"""
         if not title:
             return ""
-        
+            
         # Remove newlines and extra spaces
         title = title.replace('\n', ' ').strip()
         title = re.sub(r'\s+', ' ', title)
@@ -45,39 +45,19 @@ class Cleaner:
         return content.strip()
     
     def parse_date(self, date_str):
-        """Parse date - handles both string and datetime formats"""
-        if not date_str:
-            return datetime.now()
+        """
+        Parse string tanggal ke objek datetime menggunakan dateparser.
+        Jika gagal, return None.
+        """
+        try:
+            if not date_str or not isinstance(date_str, str):
+                return None
+            dt = dateparser.parse(date_str)
+            return dt
+        except Exception as e:
+            print(f"Error parsing date: {e}")
+            return None
         
-        # If it's already a datetime object, return as is
-        if isinstance(date_str, datetime):
-            return date_str
-        
-        # If it's a string in YYYY-MM-DD HH:MM:SS format
-        if isinstance(date_str, str):
-            try:
-                # Try parsing ISO format first
-                return datetime.fromisoformat(date_str.replace('T', ' ').replace('Z', ''))
-            except:
-                try:
-                    # Try standard datetime format
-                    return datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S")
-                except:
-                    # Try Indonesian format if still fails
-                    if 'WIB' in date_str:
-                        parts = date_str.split()
-                        if len(parts) >= 5:
-                            day = parts[1]
-                            month = self.months.get(parts[2], '01')
-                            year = parts[3]
-                            time = parts[4]
-                            
-                            dt_string = f"{year}-{month}-{day.zfill(2)} {time}"
-                            return datetime.strptime(dt_string, "%Y-%m-%d %H:%M")
-                    pass
-        
-        return datetime.now()
-    
     def generate_id(self, link):
         """Create unique ID from article link"""
         return hashlib.md5(link.encode()).hexdigest()

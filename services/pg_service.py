@@ -2,6 +2,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 import os
+import datetime
 
 class PGService:
     def __init__(self, host=os.getenv("PG_HOST"), database=os.getenv("PG_DATABASE"), user=os.getenv("PG_USER"), password=os.getenv("PG_PASSWORD"), port=os.getenv("PG_PORT")):
@@ -38,7 +39,8 @@ class PGService:
                         image TEXT,
                         date TIMESTAMP,
                         topic VARCHAR(100),
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        content TEXT,
+                        created_at TIMESTAMP
                     )
                 """)
 
@@ -64,9 +66,10 @@ class PGService:
         
         try:
             with self.conn.cursor() as cur:
+                created_at = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 cur.execute("""
-                    INSERT INTO articles (id, title, link, image, date, topic, created_at)
-                    VALUES (%(id)s, %(title)s, %(link)s, %(image)s, %(date)s, %(topic)s, %(created_at)s)
+                    INSERT INTO articles (id, title, link, image, date, topic, content , created_at)
+                    VALUES (%(id)s, %(title)s, %(link)s, %(image)s, %(date)s, %(topic)s, %(content)s, %(created_at)s)
                     ON CONFLICT (link) DO NOTHING
                 """, {
                     'id': news_data['id'],
@@ -74,7 +77,9 @@ class PGService:
                     'link': news_data['link'],
                     'image': news_data['image'],
                     'date': news_data['date'],
-                    'topic': news_data['topic']
+                    'topic': news_data['topic'],
+                    'content': news_data.get('content'),
+                    'created_at': created_at
                 })
                 
                 self.conn.commit()

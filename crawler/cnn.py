@@ -1,5 +1,6 @@
 from bs4 import BeautifulSoup, Comment
 import aiohttp
+import datetime
 import asyncio
 
 class CNNCrawler:
@@ -26,9 +27,10 @@ class CNNCrawler:
                                         "title": item.find("h2").get_text(strip=True) if item.find("h2") else "No title",
                                         "link": item.find("a")["href"] if item.find("a") else None,
                                         "image": item.find("img")["src"] if item.find("img") else "No image",
-                                        "date": comment_time.get_text(strip=True) if comment_time else None,
+                                        "date": comment_time.find(string=lambda text: isinstance(text, Comment)),
                                         "topic": item.find("span", {"class": "text-xs text-cnn_red"}).get_text(strip=True) if item.find("span", {"class": "text-xs text-cnn_red"}) else None,
-                                        "content": None
+                                        "content": None,
+                                        "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") # Placeholder for created_at
                                     }
                                     data.append(doc)
                                 except Exception as e:
