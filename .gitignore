@@ -1,3 +1,6 @@
 .env
 venv
 __pycache__
+airflow-env
+airflow_home/airflow.cfg
+aiflow_home/airflow.db

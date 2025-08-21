@@ -1,0 +1,6 @@
+[2025-08-21T13:17:11.434+0700] {manager.py:470} INFO - Processing files using up to 1 processes at a time 
+[2025-08-21T13:17:11.435+0700] {manager.py:471} INFO - Process each file at most once every 30 seconds
+[2025-08-21T13:17:11.435+0700] {manager.py:472} INFO - Checking for new files in /home/iqbale/Works/etl-simple/source/airflow_home/dags every 300 seconds
+[2025-08-21T13:17:11.435+0700] {manager.py:737} INFO - Searching for files in /home/iqbale/Works/etl-simple/source/airflow_home/dags
+[2025-08-21T13:17:11.436+0700] {manager.py:740} INFO - There are 0 files in /home/iqbale/Works/etl-simple/source/airflow_home/dags
+[2025-08-21T13:17:17.358+0700] {manager.py:452} INFO - Exiting gracefully upon receiving signal 15
