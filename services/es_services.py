@@ -53,7 +53,8 @@ class ESService:
             "content": news_data.get("content"),
             "link": news_data.get("link"),
             "image": news_data.get("image"),
-            "date": news_data.get("date")
+            "date": news_data.get("date"),
+            "topic": news_data.get("topic")
         }
 
         try:

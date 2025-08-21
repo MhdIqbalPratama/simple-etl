@@ -65,8 +65,8 @@ class PGService:
         try:
             with self.conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO articles (id, title, link, image, date, topic, content_length)
-                    VALUES (%(id)s, %(title)s, %(link)s, %(image)s, %(date)s, %(topic)s, %(content_length)s)
+                    INSERT INTO articles (id, title, link, image, date, topic, created_at)
+                    VALUES (%(id)s, %(title)s, %(link)s, %(image)s, %(date)s, %(topic)s, %(created_at)s)
                     ON CONFLICT (link) DO NOTHING
                 """, {
                     'id': news_data['id'],
@@ -74,8 +74,7 @@ class PGService:
                     'link': news_data['link'],
                     'image': news_data['image'],
                     'date': news_data['date'],
-                    'topic': news_data['topic'],
-                    'content_length': len(news_data['content']) if news_data['content'] else 0
+                    'topic': news_data['topic']
                 })
                 
                 self.conn.commit()
