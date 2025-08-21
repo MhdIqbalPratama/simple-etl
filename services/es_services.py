@@ -30,9 +30,7 @@ class ESService:
                     "link": {"type": "keyword"},
                     "image": {"type": "keyword"},
                     "date": {"type": "date"},
-                    "topic": {"type": "keyword"},
-                    "search_text": {"type": "text"},
-                    "content_length": {"type": "integer"}
+                    "topic": {"type": "keyword"}
                 }
             }
         } 
@@ -55,10 +53,7 @@ class ESService:
             "content": news_data.get("content"),
             "link": news_data.get("link"),
             "image": news_data.get("image"),
-            "date": news_data.get("date"),
-            "topic": news_data.get("topic"),
-            "search_text": f"{news_data.get('title')} {news_data.get('content')}",
-            "content_length": len(news_data.get("content", ""))
+            "date": news_data.get("date")
         }
 
         try:
@@ -84,9 +79,7 @@ class ESService:
                     "link": news_data.get("link"),
                     "image": news_data.get("image"),
                     "date": news_data.get("date"),
-                    "topic": news_data.get("topic"),
-                    "search_text": f"{news_data.get('title')} {news_data.get('content')}",
-                    "content_length": len(news_data.get("content", ""))
+                    "topic": news_data.get("topic")
                 }
             }
             action.append(doc) 

@@ -38,18 +38,10 @@ class PGService:
                         image TEXT,
                         date TIMESTAMP,
                         topic VARCHAR(100),
-                        content_length INTEGER,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
 
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS categories (
-                        id SERIAL PRIMARY KEY,
-                        name VARCHAR(100) UNIQUE,
-                        article_count INTEGER DEFAULT 0
-                    )
-                """)
 
                 cursor.execute("""
                     CREATE INDEX IF NOT EXISTS idx_articles_topic ON articles (topic);
