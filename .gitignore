@@ -4,3 +4,7 @@ __pycache__
 airflow-env
 airflow_home/airflow.cfg
 aiflow_home/airflow.db
+airflow_home/logs
+airflow_home/plugins
+airflow_home/unittests.cfg
+aiflow_home/airflow-webserver.pid

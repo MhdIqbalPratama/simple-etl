@@ -71,7 +71,7 @@ class Cleaner:
             'link': article['link'],
             'image': article.get('image', ''),
             'date': self.parse_date(article.get('date')),
-            'topic': article.get('topic', 'General')
+            'topic': article.get('topic')
         }
         return cleaned
     
