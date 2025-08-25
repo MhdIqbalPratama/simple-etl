@@ -3,6 +3,7 @@ from psycopg2.extras import RealDictCursor, execute_batch
 import os
 import datetime
 from dotenv import load_dotenv
+from processor.cleaner import Cleaner
 
 load_dotenv()
 
@@ -145,69 +146,55 @@ class PGStagingService:
                 return 0
         
         try:
+            cleaner = Cleaner()
             with self.conn.cursor() as cursor:
-                # Get unprocessed bronze records
-                cursor.execute("""
-                    SELECT * FROM pg_bronze 
-                    WHERE processed = FALSE
-                """)
+                cursor.execute("SELECT * FROM pg_bronze WHERE processed = FALSE")
                 bronze_records = cursor.fetchall()
-                
-                if not bronze_records:
-                    print("No unprocessed bronze records found")
-                    return 0
-                
-                # Process each record
                 silver_data = []
                 processed_ids = []
-                
+
                 for record in bronze_records:
-                    # Clean and transform data
-                    content_length = len(record[6]) if record[6] else 0
-                    
-                    # Parse date
-                    parsed_date = None
-                    if record[4]:  # date_raw
-                        try:
-                            import dateparser
-                            parsed_date = dateparser.parse(record[4])
-                        except:
-                            pass
-                    
-                    
+                    article = {
+                        'title': record[1],
+                        'content': record[6],
+                        'link': record[2],
+                        'image': record[3],
+                        'date': record[4],
+                        'topic': record[5]
+                    }
+                    cleaned = cleaner.clean_article(article)
+                    content_length = len(cleaned['content']) if cleaned['content'] else 0
+
                     silver_data.append((
-                        record[0],  # id
-                        record[1],  # title
-                        record[2],  # link
-                        record[3],  # image
-                        parsed_date,  # date
-                        record[5],  # topic
-                        record[6],  # content
+                        cleaned['id'],
+                        cleaned['title'],
+                        cleaned['link'],
+                        cleaned['image'],
+                        cleaned['date'],
+                        cleaned['topic'],
+                        cleaned['content'],
                         content_length
                     ))
-                    processed_ids.append(record[0])
-                
-                # Insert into silver table
+                    processed_ids.append(cleaned['id'])
+
+                # Insert ke silver
                 insert_query = """
                     INSERT INTO pg_silver (id, title, link, image, date, topic, content, content_length)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (link) DO NOTHING
                 """
-                
                 execute_batch(cursor, insert_query, silver_data)
-                
-                # Mark bronze records as processed
+
+                # Update bronze jadi processed
                 if processed_ids:
                     cursor.execute("""
-                        UPDATE pg_bronze 
-                        SET processed = TRUE 
-                        WHERE id = ANY(%s)
+                        UPDATE pg_bronze SET processed = TRUE WHERE id = ANY(%s)
                     """, (processed_ids,))
-                
+
                 self.conn.commit()
                 print(f"Processed {len(silver_data)} records from bronze to silver")
                 return len(silver_data)
-                
+
         except Exception as e:
             print(f"Error processing bronze to silver: {e}")
             self.conn.rollback()

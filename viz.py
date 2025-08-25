@@ -129,6 +129,37 @@ class ETLDashboard:
         finally:
             conn.close()
     
+    #show one content of bronze and silver content values 
+    def get_bronze_silver_diff(self):
+        """Get differences between Bronze and Silver content"""
+        conn = self.get_connection()
+        if not conn:
+            return None
+        
+        try:
+            query = """
+                SELECT 
+                    b.id as bronze_id,
+                    b.content as bronze_content,
+                    s.id as silver_id,
+                    s.content as silver_content
+                FROM pg_bronze b
+                LEFT JOIN pg_silver s ON b.id = s.id
+                WHERE b.content != s.content OR s.content IS NULL
+    
+            """
+            
+            df = pd.read_sql_query(query, conn)
+            return df.tail(3)
+
+            
+        except Exception as e:
+            st.error(f"Error fetching Bronze-Silver differences: {e}")
+            return None
+        finally:
+            conn.close()
+
+
     def get_daily_articles(self):
         """Get daily article counts"""
         conn = self.get_connection()
@@ -337,6 +368,14 @@ def main():
     
     # Processing stages flow
     st.subheader("🔄 Data Flow Overview")
+
+    #show of bronze content and silver content
+    bronze_silver_diff = dashboard.get_bronze_silver_diff()
+    if bronze_silver_diff is not None and not bronze_silver_diff.empty:
+        st.write("### Bronze vs Silver Content Differences")
+        st.dataframe(bronze_silver_diff, use_container_width=True)
+    else:
+        st.info("No differences found between Bronze and Silver content")
     
     if pipeline_stats:
         # Create a flow diagram

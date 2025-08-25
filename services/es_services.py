@@ -17,7 +17,7 @@ class ESService:
             api_key=self.api_key
         )
 
-        self.index_name = "news_index"
+        self.index_name = "es_gold"
     
     def setup_index(self):
         #Create index with mappings
@@ -65,11 +65,13 @@ class ESService:
             return False
         
     def save_bulk(self, news_list):
+        """Fixed save_bulk method - the bug was in the loop structure"""
         if not news_list:
             print("No news data to save.")
-            return False
+            return 0
         
-        action = []
+        actions = []  # Fixed: moved outside the loop
+        
         for news_data in news_list:
             doc = {
                 "_index": self.index_name,
@@ -80,19 +82,35 @@ class ESService:
                     "link": news_data.get("link"),
                     "image": news_data.get("image"),
                     "date": news_data.get("date"),
-                    "topic": news_data.get("topic")
+                    "topic": news_data.get("topic"),
+                    "search_text": news_data.get("search_text", ""),
+                    "content_length": news_data.get("content_length", 0)
                 }
             }
-            action.append(doc) 
-            try:
-                success_count, failed_count = helpers.bulk(self.es, action, index=self.index_name, refresh=True)
-                print(f"Successfully indexed {success_count} documents.")
-
-                return success_count
+            actions.append(doc)
+        
+        try:
+            # Fixed: moved bulk operation outside the loop
+            success_count, failed_documents = helpers.bulk(
+                self.es, 
+                actions, 
+                index=self.index_name, 
+                refresh=True,
+                request_timeout=60
+            )
+            print(f"Successfully indexed {success_count} documents to Elasticsearch.")
             
-            except Exception as e:
-                print(f"An error occurred during bulk indexing: {e}")
-                return False
+            if failed_documents:
+                print(f"Failed to index {len(failed_documents)} documents.")
+                # Optionally log failed documents
+                for failed_doc in failed_documents:
+                    print(f"Failed document: {failed_doc}")
+
+            return success_count
+            
+        except Exception as e:
+            print(f"An error occurred during bulk indexing: {e}")
+            return 0
     
     def search_news(self, query, size=10):
         """Search for news articles in Elasticsearch based on a query."""
