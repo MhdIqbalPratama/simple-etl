@@ -21,25 +21,34 @@ class Cleaner:
         
         return title
     
-    def clean_content(self, content):
-        """Clean article content"""
+    def clean_content(self, content: str) -> str:
+        """Clean article content from CNN Indonesia crawler."""
         if not content:
             return ""
         
-        # Remove advertisements
-        content = re.sub(r'ADVERTISEMENT.*?SCROLL TO CONTINUE', '', content, flags=re.DOTALL)
+        # Remove advertisements and scroll prompts
+        content = re.sub(r'ADVERTISEMENT.*?SCROLL TO CONTINUE WITH CONTENT', '', content, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Remove "Pilihan Redaksi" sections (up to next line or sentence)
+        content = re.sub(r'Pilihan Redaksi.*?(?=[A-Z0-9])', '', content, flags=re.DOTALL)
         
         # Remove "Lihat Juga" sections
         content = re.sub(r'Lihat Juga\s*:.*?(?=\n|$)', '', content, flags=re.MULTILINE)
         
-        # Remove video tags
+        # Remove photo / credit notes like (ANTARA FOTO/...), (CNN Indonesia/...), etc.
+        content = re.sub(r'\([^)]*FOTO[^)]*\)', '', content, flags=re.IGNORECASE)
+        content = re.sub(r'\([^)]*CNN[^)]*\)', '', content, flags=re.IGNORECASE)
+        
+        # Remove video embed tags [Gambas:Video ...]
         content = re.sub(r'\[Gambas:.*?\]', '', content)
         
-        # Clean extra spaces and newlines
+        # Normalize excessive newlines (convert 3+ to just 2)
         content = re.sub(r'\n{3,}', '\n\n', content)
+        
+        # Normalize spaces (collapse multiple spaces/tabs)
         content = re.sub(r'\s+', ' ', content)
         
-        # Remove leading location pattern
+        # Remove leading location pattern like "Jakarta, CNN Indonesia -- "
         content = re.sub(r'^[A-Za-z\s,]+CNN Indonesia\s*--\s*', '', content)
         
         return content.strip()

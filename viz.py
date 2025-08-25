@@ -150,7 +150,7 @@ class ETLDashboard:
             """
             
             df = pd.read_sql_query(query, conn)
-            return df.tail(3)
+            return df.tail(10)
 
             
         except Exception as e:
