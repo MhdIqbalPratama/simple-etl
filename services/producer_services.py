@@ -9,7 +9,7 @@ load_dotenv()
 class ProducerService:
     def __init__(self):
         self.bootstrap_servers = os.getenv('KAFKA_BROKER')
-        self.topic = os.getenv('KAFKA_TOPIC')
+        self.topic = os.getenv('KAFKA_RAW_TOPIC')
 
         self.producer = KafkaProducer(
             bootstrap_servers=self.bootstrap_servers,

@@ -64,7 +64,7 @@ def crawl_and_produce(**kwargs):
         print("🕷️ Starting CNN crawling process...")
         
         # Configurable page count
-        total_pages = int(kwargs.get('dag_run').conf.get('pages', 3)) if kwargs.get('dag_run') and kwargs.get('dag_run').conf else 3
+        total_pages = int(kwargs.get('dag_run').conf.get('pages', 15)) if kwargs.get('dag_run') and kwargs.get('dag_run').conf else 15
         
         # Crawl articles
         articles = asyncio.run(crawler.crawl_all_contents(total_pages))
