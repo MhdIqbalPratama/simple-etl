@@ -3,622 +3,562 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from wordcloud import WordCloud
-import matplotlib.pyplot as plt
-import re
-from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from services.staging_pg import PostgresService
-from services.es import ElasticsearchService # Added ES import
 import os
+from datetime import datetime, timedelta
+import json
+from typing import List, Dict, Any
 from dotenv import load_dotenv
 
-# Load environment variables
+# Import Elasticsearch service for search
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from services.es import ElasticsearchService
+
 load_dotenv()
 
-# Indonesian stopwords
-INDONESIAN_STOPWORDS = {
-    'yang', 'dan', 'di', 'ke', 'dari', 'dalam', 'untuk', 'pada', 'dengan', 'ini', 'itu', 'adalah', 'akan', 
-    'telah', 'sudah', 'dapat', 'bisa', 'juga', 'tidak', 'atau', 'serta', 'oleh', 'sebagai', 'karena', 
-    'saat', 'ketika', 'sebelum', 'sesudah', 'antara', 'namun', 'tetapi', 'jika', 'maka', 'bila', 'kita', 
-    'kami', 'mereka', 'dia', 'ia', 'nya', 'mu', 'ku', 'anda', 'saya', 'kamu', 'beliau', 'para', 'semua', 
-    'setiap', 'masing', 'beberapa', 'banyak', 'sedikit', 'lebih', 'kurang', 'paling', 'sangat', 'amat', 
-    'begitu', 'sekali', 'lagi', 'masih', 'sedang', 'tengah', 'baru', 'lama', 'dulu', 'nanti', 'sekarang', 
-    'hari', 'waktu', 'tahun', 'bulan', 'minggu', 'jam', 'menit', 'detik', 'pagi', 'siang', 'sore', 
-    'malam', 'kemarin', 'besok', 'lusa', 'tadi', 'nanti', 'sebentar', 'lalu', 'kemudian', 'akhirnya',
-    'ada', 'tak', 'pun', 'lah', 'kah', 'tah', 'pula', 'saja', 'hanya', 'cuma', 'pun', 'dong', 'kok', 
-    'sih', 'deh', 'yah', 'nih', 'tuh', 'wah', 'aduh', 'astaga', 'alamak', 'ayo', 'mari', 'silakan',
-    'kata', 'ucap', 'tutur', 'sebut', 'bilang', 'ungkap', 'jelas', 'terang', 'nyata'
-}
+# Page configuration
+st.set_page_config(
+    page_title="CNN Indonesia News Analytics",
+    page_icon="📰",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-class NewsDatabase:
-    def __init__(self):
-        self.connection_params = {
-            "host": os.getenv("PG_HOST"),
-            "database": os.getenv("PG_DATABASE"), 
-            "user": os.getenv("PG_USER"),
-            "password": os.getenv("PG_PASSWORD"),
-            "port": int(os.getenv("PG_PORT", 5432))
-        }
-        self.search = PostgresService()
-        # Initialize Elasticsearch service
-        self.es = ElasticsearchService()
+class NewsAnalyticsDashboard:
+    """Main dashboard class for news analytics"""
     
-    def get_connection(_self):
+    def __init__(self):
+        self.pg_connection = None
+        self.es_service = ElasticsearchService()
+        self.setup_database_connection()
+    
+    def setup_database_connection(self):
+        """Setup PostgreSQL connection"""
         try:
-            conn = psycopg2.connect(**_self.connection_params)
-            return conn
+            self.pg_connection = psycopg2.connect(
+                host=os.getenv("PG_HOST"),
+                database=os.getenv("PG_DATABASE"),
+                user=os.getenv("PG_USER"),
+                password=os.getenv("PG_PASSWORD"),
+                port=int(os.getenv("PG_PORT"))
+            )
+
         except Exception as e:
             st.error(f"Database connection failed: {e}")
-            return None
     
-    def get_statistics(self):
-        conn = self.get_connection()
-        if not conn:
-            return {}
+    def execute_query(self, query: str, params=None) -> List[Dict]:
+        """Execute PostgreSQL query and return results"""
+        if not self.pg_connection:
+            return []
         
         try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cursor:
-                stats = {}
-                
-                # All stats in one query for better performance
-                cursor.execute("""
-                    WITH bronze_stats AS (
-                        SELECT 
-                            COUNT(*) as total,
-                            COUNT(CASE WHEN processed = TRUE THEN 1 END) as processed,
-                            COUNT(CASE WHEN processed = FALSE THEN 1 END) as pending
-                        FROM bronze
-                    ),
-                    silver_stats AS (
-                        SELECT 
-                            COUNT(*) as total,
-                            ROUND(AVG(content_length)::numeric, 2) as avg_content_length,
-                            COUNT(CASE WHEN processed = TRUE THEN 1 END) as processed
-                        FROM silver
-                    ),
-                    gold_stats AS (
-                        SELECT COUNT(*) as total FROM view_gold
-                    ),
-                    topic_stats AS (
-                        SELECT topic, COUNT(*) as count
-                        FROM view_gold
-                        WHERE topic IS NOT NULL
-                        GROUP BY topic
-                        ORDER BY count DESC
-                        LIMIT 10
-                    ),
-                    hourly_stats AS (
-                        SELECT 
-                            publish_hour,
-                            COUNT(*) as article_count
-                        FROM view_gold
-                        GROUP BY publish_hour
-                        ORDER BY publish_hour
-                    )
-                    SELECT 
-                        (SELECT row_to_json(bronze_stats.*) FROM bronze_stats) as bronze,
-                        (SELECT row_to_json(silver_stats.*) FROM silver_stats) as silver,
-                        (SELECT row_to_json(gold_stats.*) FROM gold_stats) as gold,
-                        (SELECT json_agg(topic_stats.*) FROM topic_stats) as topics,
-                        (SELECT json_agg(hourly_stats.*) FROM hourly_stats) as hourly
-                """)
-                
-                result = cursor.fetchone()
-                if result:
-                    stats['bronze'] = result['bronze']
-                    stats['silver'] = result['silver'] 
-                    stats['gold'] = result['gold']
-                    stats['topics'] = result['topics'] or []
-                    stats['hourly'] = result['hourly'] or []
-                
-                return stats
-                
+            with self.pg_connection.cursor(cursor_factory=RealDictCursor) as cursor:
+                cursor.execute(query, params)
+                return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
-            st.error(f"Error getting statistics: {e}")
-            return {}
-        finally:
-            conn.close()
-    
-    def search_news(self, query: str):
-        return self.search.full_text_search(query)
-    
-    # NEW: Elasticsearch-based insights
-    def get_es_statistics(self):
-        """Get comprehensive Elasticsearch statistics"""
-        try:
-            return self.es.get_statistics()
-        except Exception as e:
-            st.error(f"Error getting ES statistics: {e}")
-            return {}
-    
-    def get_es_health(self):
-        """Get Elasticsearch health status"""
-        try:
-            return self.es.health_check()
-        except Exception as e:
-            return {"cluster_status": "error", "error": str(e)}
-    
-    def get_date_histogram(self, interval="day"):
-        """Get article distribution over time"""
-        try:
-            return self.es.get_date_histogram(interval)
-        except Exception as e:
-            st.error(f"Error getting date histogram: {e}")
+            st.error(f"Query execution failed: {e}")
             return []
     
-    def search_es_articles(self, query, size=10, topic_filter=None):
-        """Search articles using Elasticsearch"""
-        try:
-            return self.es.search_articles(query, size, topic_filter)
-        except Exception as e:
-            st.error(f"Error searching ES articles: {e}")
-            return []
+    def get_overview_metrics(self) -> Dict[str, Any]:
+        """Get overview metrics for the dashboard"""
+        query = """
+        SELECT 
+            (SELECT COUNT(*) FROM view_gold) as total_articles,
+            (SELECT COUNT(*) FROM view_gold WHERE publish_date = CURRENT_DATE) as today_articles,
+            (SELECT COUNT(*) FROM view_gold WHERE publish_date >= CURRENT_DATE - INTERVAL '7 days') as week_articles,
+            (SELECT COUNT(DISTINCT topic_category) FROM view_gold) as unique_topics,
+            (SELECT COUNT(*) FROM gold_entities) as total_entities,
+            (SELECT COUNT(DISTINCT entity_text) FROM gold_entities WHERE entity_type = 'PER') as unique_people,
+            (SELECT COUNT(DISTINCT entity_text) FROM gold_entities WHERE entity_type = 'ORG') as unique_orgs,
+            (SELECT AVG(content_length) FROM view_gold) as avg_content_length
+        """
+        
+        result = self.execute_query(query)
+        return result[0] if result else {}
+    
+    def get_topic_distribution(self) -> pd.DataFrame:
+        """Get article distribution by topic"""
+        query = """
+        SELECT 
+            topic_category,
+            COUNT(*) as article_count,
+            AVG(content_length) as avg_length,
+            COUNT(CASE WHEN publish_date >= CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as recent_count
+        FROM view_gold
+        GROUP BY topic_category
+        ORDER BY article_count DESC
+        """
+        
+        results = self.execute_query(query)
+        return pd.DataFrame(results)
+    
+    def get_time_trends(self, days: int = 30) -> pd.DataFrame:
+        """Get article trends over time"""
+        query = """
+        SELECT 
+            publish_date,
+            topic_category,
+            COUNT(*) as daily_count,
+            AVG(content_length) as avg_length
+        FROM view_gold
+        WHERE publish_date >= CURRENT_DATE - INTERVAL %s
+        GROUP BY publish_date, topic_category
+        ORDER BY publish_date DESC
+        """
+        
+        results = self.execute_query(query, (f"{days} days",))
+        return pd.DataFrame(results)
+    
+    def get_entity_insights(self, entity_type: str = 'PER', limit: int = 20) -> pd.DataFrame:
+        """Get entity insights"""
+        query = """
+        SELECT 
+            entity_text,
+            entity_type,
+            COUNT(*) as mention_count,
+            COUNT(DISTINCT article_id) as article_count,
+            AVG(confidence_score) as avg_confidence,
+            MAX(ge.processed_at) as latest_mention
+        FROM gold_entities ge
+        WHERE entity_type = %s
+          AND confidence_score > 0.7
+          AND processed_at >= CURRENT_DATE - INTERVAL '30 days'
+        GROUP BY entity_text, entity_type
+        HAVING COUNT(*) >= 2
+        ORDER BY mention_count DESC, avg_confidence DESC
+        LIMIT %s
+        """
+        
+        results = self.execute_query(query, (entity_type, limit))
+        return pd.DataFrame(results)
+    
+    def get_content_analytics(self) -> Dict[str, Any]:
+        """Get content quality analytics"""
+        query = """
+        SELECT 
+            content_category,
+            COUNT(*) as count,
+            AVG(word_count) as avg_words,
+            AVG(sentence_count) as avg_sentences,
+            COUNT(CASE WHEN has_good_title THEN 1 END) as good_titles,
+            COUNT(CASE WHEN has_image THEN 1 END) as with_images
+        FROM view_gold
+        GROUP BY content_category
+        ORDER BY 
+            CASE content_category 
+                WHEN 'Short' THEN 1 
+                WHEN 'Medium' THEN 2 
+                WHEN 'Long' THEN 3 
+                WHEN 'Very Long' THEN 4 
+            END
+        """
+        
+        results = self.execute_query(query)
+        return pd.DataFrame(results)
 
-def clean_text_for_wordcloud(text):
-    if not text:
-        return ""
+def render_overview_metrics(dashboard):
+    """Render overview metrics cards"""
+    metrics = dashboard.get_overview_metrics()
     
-    text = text.lower()
-    text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', text)
-    text = re.sub(r'[^a-zA-Z\s]', ' ', text)
+    if not metrics:
+        st.error("Could not load overview metrics")
+        return
     
-    words = text.split()
-    filtered_words = [word for word in words if len(word) > 2 and word not in INDONESIAN_STOPWORDS]
+    col1, col2, col3, col4 = st.columns(4)
     
-    return ' '.join(filtered_words)
+    with col1:
+        st.metric(
+            label="Total Articles",
+            value=f"{metrics.get('total_articles', 0):,}",
+            delta=f"+{metrics.get('today_articles', 0)} today"
+        )
+    
+    with col2:
+        st.metric(
+            label="This Week",
+            value=f"{metrics.get('week_articles', 0):,}",
+            delta=f"{metrics.get('unique_topics', 0)} topics"
+        )
+    
+    with col3:
+        st.metric(
+            label="Total Entities",
+            value=f"{metrics.get('total_entities', 0):,}",
+            delta=f"{metrics.get('unique_people', 0)} people"
+        )
+    
+    with col4:
+        avg_length = metrics.get('avg_content_length', 0)
+        st.metric(
+            label="Avg Content Length",
+            value=f"{int(avg_length):,} chars" if avg_length else "0",
+            delta=f"{metrics.get('unique_orgs', 0)} organizations"
+        )
 
-def create_wordcloud(text, max_words=50):
-    if not text:
-        return None
+def render_topic_analysis(dashboard):
+    """Render topic analysis section"""
+    st.subheader("Topic Distribution Analysis")
     
-    cleaned_text = clean_text_for_wordcloud(text)
-    if not cleaned_text:
-        return None
+    topic_df = dashboard.get_topic_distribution()
     
-    wordcloud = WordCloud(
-        width=600, 
-        height=300,
-        background_color='white',
-        max_words=max_words,
-        colormap='viridis',
-        relative_scaling=0.5
-    ).generate(cleaned_text)
-    
-    return wordcloud
-
-def display_search_performance_insights(db):
-    """New section: Search & Performance Insights"""
-    st.subheader("🔍 Search & Performance Insights")
+    if topic_df.empty:
+        st.warning("No topic data available")
+        return
     
     col1, col2 = st.columns(2)
     
     with col1:
-        st.write("**🏥 System Health**")
-        es_health = db.get_es_health()
-        
-        # Health status indicators
-        status_color = {
-            "green": "🟢",
-            "yellow": "🟡", 
-            "red": "🔴",
-            "error": "💥"
-        }
-        
-        status_icon = status_color.get(es_health.get("cluster_status", "error"), "❓")
-        st.write(f"{status_icon} **Cluster Status:** {es_health.get('cluster_status', 'Unknown')}")
-        st.write(f"📊 **ES Documents:** {es_health.get('document_count', 0):,}")
-        st.write(f"📁 **Index Exists:** {'✅' if es_health.get('index_exists', False) else '❌'}")
-        
-        # Add ES vs DB comparison
-        es_stats = db.get_es_statistics()
-        pg_stats = db.get_statistics()
-        
-        es_count = es_stats.get('total_documents', 0)
-        pg_gold_count = pg_stats.get('gold', {}).get('total', 0)
-        
-        if pg_gold_count > 0:
-            sync_percentage = (es_count / pg_gold_count) * 100
-            st.metric("📊 ES-DB Sync", f"{sync_percentage:.1f}%", 
-                     f"{es_count - pg_gold_count:+,} docs")
+        # Topic distribution pie chart
+        fig_pie = px.pie(
+            topic_df, 
+            values='article_count', 
+            names='topic_category',
+            title="Articles by Topic Category"
+        )
+        fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+        st.plotly_chart(fig_pie, use_container_width=True)
     
     with col2:
-        st.write("**📈 Content Distribution Trends**")
-        date_histogram = db.get_date_histogram("day")
-        
-        if date_histogram:
-            df_hist = pd.DataFrame(date_histogram)
-            df_hist['date'] = pd.to_datetime(df_hist['date'])
-            df_hist = df_hist.sort_values('date').tail(14)  # Last 2 weeks
-            
-            fig = px.area(
-                df_hist, 
-                x='date', 
-                y='count',
-                title="Article Volume (Last 14 Days)",
-                height=250
-            )
-            fig.update_layout(
-                margin=dict(l=0, r=0, t=30, b=0),
-                showlegend=False
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No temporal data available")
-
-def display_advanced_search_section(db):
-    """Enhanced search section with ES capabilities"""
-    st.subheader("🔍 Advanced Search & Analysis")
+        # Topic vs average content length
+        fig_bar = px.bar(
+            topic_df.sort_values('avg_length', ascending=False),
+            x='topic_category',
+            y='avg_length',
+            title="Average Content Length by Topic",
+            color='recent_count',
+            color_continuous_scale='viridis'
+        )
+        fig_bar.update_layout(xaxis_title = " Topic Category",
+                              yaxis_title= " Avarage length")
+        # fig_bar.update_xaxis(title="Topic Category")
+        # fig_bar.update_yaxis(title="Average Length (characters)")
+        # fig_bar.update_layout(xaxis_tickangle=-45)
+        st.plotly_chart(fig_bar, use_container_width=True)
     
-    col1, col2 = st.columns([1, 2])
+    # Topic details table
+    st.subheader("Topic Details")
+    topic_df_display = topic_df.copy()
+    topic_df_display['avg_length'] = topic_df_display['avg_length'].astype(int)
+    topic_df_display = topic_df_display.rename(columns={
+        'topic_category': 'Topic',
+        'article_count': 'Total Articles',
+        'avg_length': 'Avg Length',
+        'recent_count': 'Recent (7 days)'
+    })
+    st.dataframe(topic_df_display, use_container_width=True)
+
+def render_time_trends(dashboard):
+    """Render time trends analysis"""
+    st.subheader("Publication Trends")
+    
+    # Time range selector
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        days_back = st.selectbox(
+            "Time Range",
+            options=[7, 14, 30, 60, 90],
+            index=2,
+            format_func=lambda x: f"Last {x} days"
+        )
+    
+    trends_df = dashboard.get_time_trends(days=days_back)
+    
+    if trends_df.empty:
+        st.warning("No trend data available")
+        return
+    
+    # Convert date for plotting
+    trends_df['publish_date'] = pd.to_datetime(trends_df['publish_date'])
+    
+    # Daily article count trend
+    daily_totals = trends_df.groupby('publish_date')['daily_count'].sum().reset_index()
+    
+    fig_trend = px.line(
+        daily_totals,
+        x='publish_date',
+        y='daily_count',
+        title=f"Daily Article Count (Last {days_back} days)",
+        markers=True
+    )
+    fig_trend.update_layout(xaxis_title = "Date",
+                            yaxis_title = "Number of Articles")
+    # fig_trend.update_xaxis(title="Date")
+    # fig_trend.update_yaxis(title="Number of Articles")
+    st.plotly_chart(fig_trend, use_container_width=True)
+    
+    # Stacked area chart by topic
+    fig_stacked = px.area(
+        trends_df,
+        x='publish_date',
+        y='daily_count',
+        color='topic_category',
+        title="Daily Articles by Topic Category"
+    )
+    st.plotly_chart(fig_stacked, use_container_width=True)
+
+def render_entity_insights(dashboard):
+    """Render entity insights section"""
+    st.subheader("👥 Entity Recognition Insights")
+    
+    # Entity type selector
+    col1, col2, col3 = st.columns([2, 1, 1])
     
     with col1:
-        st.write("**🎯 Search Configuration**")
-        search_query = st.text_input("Search Query:", placeholder="ekonomi, politik, teknologi")
-        
-        # Advanced filters
-        with st.expander("🔧 Advanced Filters"):
-            # Topic filter
-            es_stats = db.get_es_statistics()
-            topics = [topic['topic'] for topic in es_stats.get('topics', [])]
-            topic_filter = st.selectbox("Filter by Topic:", ["All"] + topics)
-            topic_filter = None if topic_filter == "All" else topic_filter
+        entity_type = st.selectbox(
+            "Entity Type",
+            options=['PER', 'ORG', 'LAW', 'NOR'],
+            format_func=lambda x: {
+                'PER': '👤 People',
+                'ORG': '🏢 Organizations', 
+                'LAW': '⚖️ Laws',
+                'NOR': '🏛️ Political Organizations'
+            }.get(x, x)
+        )
+    
+    with col2:
+        limit = st.number_input("Top N", min_value=10, max_value=50, value=20)
+    
+    entities_df = dashboard.get_entity_insights(entity_type=entity_type, limit=limit)
+    
+    if entities_df.empty:
+        st.warning(f"No {entity_type} entities found")
+        return
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Top entities bar chart
+        top_entities = entities_df.head(15)
+        fig_entities = px.bar(
+            top_entities,
+            x='mention_count',
+            y='entity_text',
+            orientation='h',
+            title=f"Most Mentioned {entity_type} Entities",
+            color='avg_confidence',
+            color_continuous_scale='viridis'
+        )
+        fig_entities.update_layout(yaxis={'categoryorder': 'total ascending'})
+        st.plotly_chart(fig_entities, use_container_width=True)
+    
+    with col2:
+        # Confidence vs mentions scatter
+        fig_scatter = px.scatter(
+            entities_df,
+            x='mention_count',
+            y='avg_confidence',
+            size='article_count',
+            hover_data=['entity_text'],
+            title="Confidence vs Mention Frequency",
+            color='article_count',
+            color_continuous_scale='plasma'
+        )
+        fig_scatter.update_layout(xaxis_title = "Mention Count",
+                                  yaxis_title= "Avarage Confidance")
+        # fig_scatter.update_xaxis(title="Mention Count")
+        # fig_scatter.update_yaxis(title="Average Confidence")
+        st.plotly_chart(fig_scatter, use_container_width=True)
+    
+    # Entities table
+    st.subheader(f"Top {entity_type} Entities")
+    entities_display = entities_df.copy()
+    entities_display['avg_confidence'] = entities_display['avg_confidence'].round(3)
+    entities_display['latest_mention'] = pd.to_datetime(entities_display['latest_mention']).dt.strftime('%Y-%m-%d')
+    entities_display = entities_display.rename(columns={
+        'entity_text': 'Entity',
+        'mention_count': 'Mentions',
+        'article_count': 'Articles',
+        'avg_confidence': 'Confidence',
+        'latest_mention': 'Latest'
+    })
+    st.dataframe(entities_display, use_container_width=True)
+
+def render_search_interface(dashboard):
+    """Render search interface using Elasticsearch"""
+    st.subheader("🔍 Article Search")
+    
+    col1, col2, col3 = st.columns([3, 1, 1])
+    
+    with col1:
+        search_query = st.text_input(
+            "Search articles",
+            placeholder="Enter keywords to search..."
+        )
+    
+    with col2:
+        search_size = st.number_input("Results", min_value=5, max_value=50, value=20)
+    
+    with col3:
+        topic_filter = st.selectbox(
+            "Topic Filter",
+            options=['All'] + ['Politik', 'Ekonomi', 'Olahraga', 'Teknologi', 'Kesehatan', 'Internasional'],
+            index=0
+        )
+    
+    if search_query:
+        try:
+            # Prepare search parameters
+            topic_param = None if topic_filter == 'All' else topic_filter
             
-            # Result limit
-            search_limit = st.selectbox("Max Results:", [5, 10, 20, 50], index=1)
-        
-        search_results = []
-        if search_query:
-            with st.spinner("🔍 Searching Elasticsearch..."):
-                search_results = db.search_es_articles(
-                    search_query, 
-                    size=search_limit, 
-                    topic_filter=topic_filter
+            # Perform search
+            with st.spinner("Searching articles..."):
+                search_results = dashboard.es_service.search_articles(
+                    query=search_query,
+                    size=search_size,
+                    topic_filter=topic_param
                 )
             
             if search_results:
-                st.success(f"✅ Found {len(search_results)} articles")
+                st.success(f"Found {len(search_results)} results")
                 
-                # Search quality metrics
-                avg_score = sum(r.get('score', 0) for r in search_results) / len(search_results)
-                st.metric("📊 Avg Relevance", f"{avg_score:.2f}")
+                # Display search results
+                for i, article in enumerate(search_results):
+                    with st.expander(f"{article.get('title', 'No title')[:100]}..."):
+                        col1, col2 = st.columns([3, 1])
+                        
+                        with col1:
+                            st.write(f"**Content Preview:**")
+                            content = article.get('content', '')
+                            st.write(content[:500] + "..." if len(content) > 500 else content)
+                            
+                            # Show highlights if available
+                            if article.get('highlight'):
+                                st.write("**Highlighted matches:**")
+                                for field, highlights in article['highlight'].items():
+                                    for highlight in highlights[:2]:  # Show max 2 highlights
+                                        st.markdown(f"- {highlight}", unsafe_allow_html=True)
+                        
+                        with col2:
+                            st.write(f"**Score:** {article.get('score', 0):.2f}")
+                            st.write(f"**Topic:** {article.get('topic', 'N/A')}")
+                            st.write(f"**Date:** {article.get('date', 'N/A')}")
+                            if article.get('link'):
+                                st.markdown(f"[Read Full Article]({article['link']})")
+            
+            else:
+                st.warning("No articles found matching your search criteria")
                 
-                # Display results compactly
-                for i, article in enumerate(search_results[:5], 1):
-                    score_bar = "🟢" if article.get('score', 0) > 10 else "🟡" if article.get('score', 0) > 5 else "🟠"
-                    with st.expander(f"{score_bar} {i}. {article['title'][:50]}... ({article.get('score', 0):.1f})"):
-                        st.write(f"**📂 Topic:** {article.get('topic', 'N/A')}")
-                        st.write(f"**📅 Date:** {article.get('date', 'N/A')}")
-                        
-                        # Show highlights if available
-                        if article.get('highlight'):
-                            if 'title' in article['highlight']:
-                                st.write("**🎯 Title Match:** " + " ... ".join(article['highlight']['title']))
-                            if 'content' in article['highlight']:
-                                st.write("**📝 Content Match:** " + " ... ".join(article['highlight']['content'][:2]))
-                        
-                        # Content preview
-                        content_preview = article['content'][:200] + "..." if len(article['content']) > 200 else article['content']
-                        st.write(f"**Content:** {content_preview}")
-            else:
-                st.warning("❌ No articles found matching your criteria")
-    
-    with col2:
-        st.write("**☁️ Search Results Word Cloud**")
-        if search_results:
-            # Combine all content from search results
-            all_content = ' '.join([
-                f"{article['title']} {article['content']}" 
-                for article in search_results 
-                if article.get('content')
-            ])
-            
-            if all_content:
-                wordcloud = create_wordcloud(all_content, max_words=100)
-                if wordcloud:
-                    fig, ax = plt.subplots(figsize=(10, 5))
-                    ax.imshow(wordcloud, interpolation='bilinear')
-                    ax.axis('off')
-                    st.pyplot(fig)
-                    
-                    # Word frequency insights
-                    word_freq = wordcloud.words_
-                    if word_freq:
-                        st.write("**🔤 Top Keywords:**")
-                        top_words = list(word_freq.items())[:10]
-                        
-                        # Create a simple bar chart of top words
-                        words_df = pd.DataFrame(top_words, columns=['word', 'frequency'])
-                        fig_words = px.bar(
-                            words_df, 
-                            x='frequency', 
-                            y='word',
-                            orientation='h',
-                            height=300,
-                            title="Top Keywords in Search Results"
-                        )
-                        fig_words.update_layout(
-                            margin=dict(l=0, r=0, t=30, b=0),
-                            yaxis={'categoryorder': 'total ascending'}
-                        )
-                        st.plotly_chart(fig_words, use_container_width=True)
-                else:
-                    st.info("Unable to generate word cloud")
-            else:
-                st.info("No content available for analysis")
-        else:
-            st.info("🔍 Search for articles to see word cloud and keyword analysis")
+        except Exception as e:
+            st.error(f"Search failed: {e}")
 
-def display_enhanced_analytics(db, stats):
-    """Enhanced analytics section"""
-    st.subheader("📈 Enhanced Analytics & Insights")
+def render_content_analytics(dashboard):
+    """Render content quality analytics"""
+    st.subheader("Content Quality Analytics")
     
-    # Get ES statistics
-    es_stats = db.get_es_statistics()
+    content_df = dashboard.get_content_analytics()
     
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.write("**📚 Topic Distribution (ES)**")
-        es_topics = es_stats.get('topics', [])
-        if es_topics:
-            topics_df = pd.DataFrame(es_topics[:10])  # Top 10
-            
-            # Create a donut chart for topics
-            fig = px.pie(
-                topics_df,
-                values='count',
-                names='topic',
-                hole=0.4,
-                height=350,
-                title="Article Distribution by Topic"
-            )
-            fig.update_layout(
-                margin=dict(l=20, r=20, t=40, b=20),
-                showlegend=True,
-                legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.01)
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Topic insights
-            total_articles = sum(topic['count'] for topic in es_topics)
-            if total_articles > 0:
-                dominant_topic = es_topics[0]
-                dominance_pct = (dominant_topic['count'] / total_articles) * 100
-                st.metric(
-                    f"🏆 Dominant Topic", 
-                    dominant_topic['topic'],
-                    f"{dominance_pct:.1f}% of content"
-                )
-        else:
-            st.info("No topic data available from ES")
-    
-    with col2:
-        st.write("**🕐 Publishing Patterns**")
-        hourly_data = stats.get('hourly', [])
-        if hourly_data:
-            hourly_df = pd.DataFrame(hourly_data)
-            
-            # Enhanced hourly chart with peak indicators
-            fig = go.Figure()
-            
-            # Add main line
-            fig.add_trace(go.Scatter(
-                x=hourly_df['publish_hour'],
-                y=hourly_df['article_count'],
-                mode='lines+markers',
-                name='Articles',
-                line=dict(color='#2E86AB', width=3),
-                marker=dict(size=6)
-            ))
-            
-            # Highlight peak hours
-            max_count = hourly_df['article_count'].max()
-            peak_threshold = max_count * 0.8
-            peak_hours = hourly_df[hourly_df['article_count'] >= peak_threshold]
-            
-            if not peak_hours.empty:
-                fig.add_trace(go.Scatter(
-                    x=peak_hours['publish_hour'],
-                    y=peak_hours['article_count'],
-                    mode='markers',
-                    name='Peak Hours',
-                    marker=dict(color='red', size=10, symbol='star')
-                ))
-            
-            fig.update_layout(
-                title="Publishing Activity by Hour",
-                xaxis_title="Hour of Day",
-                yaxis_title="Article Count",
-                height=350,
-                margin=dict(l=0, r=0, t=40, b=0),
-                showlegend=True
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Peak hour insights
-            if not peak_hours.empty:
-                peak_hour = peak_hours.iloc[0]['publish_hour']
-                st.metric("⏰ Peak Hour", f"{peak_hour}:00", f"{peak_hours.iloc[0]['article_count']} articles")
-        else:
-            st.info("No hourly data available")
-    
-    with col3:
-        st.write("**📊 Data Quality & Processing**")
-        
-        # Multi-layer processing visualization
-        bronze_stats = stats.get('bronze', {})
-        silver_stats = stats.get('silver', {})
-        gold_stats = stats.get('gold', {})
-        
-        # Create funnel chart
-        funnel_data = [
-            dict(
-                values=[bronze_stats.get('total', 0), silver_stats.get('total', 0), gold_stats.get('total', 0)],
-                labels=['Bronze (Raw)', 'Silver (Processed)', 'Gold (Enriched)'],
-                name="Data Pipeline"
-            )
-        ]
-        
-        fig = go.Figure(go.Funnel(
-            y=['Bronze', 'Silver', 'Gold'],
-            x=[bronze_stats.get('total', 0), silver_stats.get('total', 0), gold_stats.get('total', 0)],
-            textinfo="value+percent initial",
-            marker=dict(color=['#CD7F32', '#C0C0C0', '#FFD700']),
-        ))
-        
-        fig.update_layout(
-            title="Data Processing Pipeline",
-            height=350,
-            margin=dict(l=0, r=0, t=40, b=20)
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Processing efficiency
-        if bronze_stats.get('total', 0) > 0:
-            efficiency = (gold_stats.get('total', 0) / bronze_stats.get('total', 0)) * 100
-            st.metric("🎯 Pipeline Efficiency", f"{efficiency:.1f}%", "Bronze → Gold")
-
-def main():
-    st.set_page_config(
-        page_title="CNN Indonesia News Analytics Dashboard",
-        page_icon="📰",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-    
-    # Enhanced custom CSS
-    st.markdown("""
-    <style>
-    .main > div {
-        padding-top: 1rem;
-    }
-    .stMetric > div > div > div > div {
-        font-size: 0.9rem;
-    }
-    .stExpander > div > div > div {
-        padding: 0.5rem;
-    }
-    .success-metric { color: #00C851; }
-    .warning-metric { color: #FF8800; }
-    .error-metric { color: #FF4444; }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    st.title("📰 CNN Indonesia News Analytics Dashboard")
-    st.markdown("*Advanced analytics powered by PostgreSQL and Elasticsearch*")
-    
-    # Initialize database
-    db = NewsDatabase()
-    
-    # Sidebar controls
-    with st.sidebar:
-        st.header("🔧 Dashboard Controls")
-        
-        # Refresh controls
-        if st.button("🔄 Refresh All Data", type="primary"):
-            st.rerun()
-        
-        # Display options
-        st.subheader("📊 Display Options")
-        show_es_insights = st.checkbox("Show Elasticsearch Insights", value=True)
-        show_advanced_search = st.checkbox("Show Advanced Search", value=True)
-        
-        # Auto-refresh
-        auto_refresh = st.checkbox("Auto Refresh (5min)")
-        if auto_refresh:
-            st.rerun()
-        
-        st.divider()
-        
-        # System status
-        st.subheader("🏥 System Status")
-        es_health = db.get_es_health()
-        pg_connected = db.get_connection() is not None
-        
-        st.write(f"🐘 PostgreSQL: {'🟢 Connected' if pg_connected else '🔴 Disconnected'}")
-        es_status = es_health.get('cluster_status', 'error')
-        status_emoji = {"green": "🟢", "yellow": "🟡", "red": "🔴", "error": "🔴"}.get(es_status, "❓")
-        st.write(f"🔍 Elasticsearch: {status_emoji} {es_status.title()}")
-    
-    # Load statistics
-    with st.spinner("📊 Loading comprehensive analytics..."):
-        stats = db.get_statistics()
-    
-    if not stats:
-        st.error("❌ Unable to load database statistics.")
+    if content_df.empty:
+        st.warning("No content analytics data available")
         return
     
-    # TOP SECTION: Enhanced Key Metrics
-    st.subheader("📊 System Overview")
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2 = st.columns(2)
     
     with col1:
-        bronze_total = stats.get('bronze', {}).get('total', 0)
-        st.metric("🥉 Bronze", f"{bronze_total:,}")
+        # Content category distribution
+        fig_content = px.bar(
+            content_df,
+            x='content_category',
+            y='count',
+            title="Articles by Content Length Category",
+            color='avg_words',
+            color_continuous_scale='blues'
+        )
+        fig_content.update_layout(xaxis_title = "Content Category",
+                                  yaxis_title ="Numbers of Article")
+        # fig_content.update_xaxis(title="Content Category")
+        # fig_content.update_yaxis(title="Number of Articles")
+        st.plotly_chart(fig_content, use_container_width=True)
     
     with col2:
-        silver_total = stats.get('silver', {}).get('total', 0)
-        st.metric("🥈 Silver", f"{silver_total:,}")
+        # Quality metrics
+        content_df['good_title_rate'] = (content_df['good_titles'] / content_df['count'] * 100).round(1)
+        content_df['image_rate'] = (content_df['with_images'] / content_df['count'] * 100).round(1)
+        
+        fig_quality = px.scatter(
+            content_df,
+            x='good_title_rate',
+            y='image_rate',
+            size='count',
+            hover_data=['content_category', 'avg_words'],
+            title="Content Quality Metrics",
+            color='avg_words',
+            color_continuous_scale='viridis'
+        )
+        fig_quality.update_layout(xaxis_title = "Good Title Rate",
+                                  yaxis_title = "Image Rate")
+        # fig_quality.update_xaxis(title="Good Title Rate (%)")
+        # fig_quality.update_yaxis(title="Image Rate (%)")
+        st.plotly_chart(fig_quality, use_container_width=True)
     
-    with col3:
-        gold_total = stats.get('gold', {}).get('total', 0)
-        st.metric("🥇 Gold", f"{gold_total:,}")
+    # Content analytics table
+    display_df = content_df.copy()
+    display_df['avg_words'] = display_df['avg_words'].astype(int)
+    display_df['avg_sentences'] = display_df['avg_sentences'].astype(int)
+    display_df = display_df.rename(columns={
+        'content_category': 'Category',
+        'count': 'Articles',
+        'avg_words': 'Avg Words',
+        'avg_sentences': 'Avg Sentences',
+        'good_titles': 'Good Titles',
+        'with_images': 'With Images'
+    })
+    st.dataframe(display_df, use_container_width=True)
+
+def main():
+    """Main dashboard application"""
+    st.title("CNN Indonesia News Analytics Dashboard")
+    # st.markdown("Real-time analytics and insights from CNN Indonesia news articles")
     
-    with col4:
-        es_stats = db.get_es_statistics()
-        es_total = es_stats.get('total_documents', 0)
-        st.metric("🔍 ES Index", f"{es_total:,}")
+    # Initialize dashboard
+    dashboard = NewsAnalyticsDashboard()
     
-    with col5:
-        avg_length = stats.get('silver', {}).get('avg_content_length', 0)
-        st.metric("📝 Avg Length", f"{int(avg_length):,}")
+    # Sidebar navigation
+    st.sidebar.title("Navigation")
+    page = st.sidebar.radio(
+        "Select Page",
+        ["Overview", "Topic Analysis", "Time Trends", "Entity Insights", "Search Articles", "Content Analytics"]
+    )
     
-    with col6:
-        processing_rate = (stats.get('bronze', {}).get('processed', 0) / max(bronze_total, 1)) * 100
-        st.metric("⚙️ Processed", f"{processing_rate:.1f}%")
+    # Add refresh button
+    if st.sidebar.button("Refresh Data"):
+        st.cache_data.clear()
+        st.experimental_rerun()
     
-    st.divider()
+    # Render selected page
+    if page == "Overview":
+        render_overview_metrics(dashboard)
+        
+        # Show recent highlights
+        st.subheader("Quick Insights")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            render_topic_analysis(dashboard)
+        
+        with col2:
+            render_entity_insights(dashboard)
     
-    # NEW: Search Performance Insights
-    if show_es_insights:
-        display_search_performance_insights(db)
-        st.divider()
+    elif page == "Topic Analysis":
+        render_topic_analysis(dashboard)
     
-    # ENHANCED: Advanced Search Section
-    if show_advanced_search:
-        display_advanced_search_section(db)
-        st.divider()
+    elif page == "Time Trends":
+        render_time_trends(dashboard)
     
-    # ENHANCED: Analytics Charts
-    display_enhanced_analytics(db, stats)
+    elif page == "Entity Insights":
+        render_entity_insights(dashboard)
     
-    # FOOTER: Extended Quick Stats
-    st.divider()
+    elif page == "Search Articles":
+        render_search_interface(dashboard)
     
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        silver_processed = stats.get('silver', {}).get('processed', 0)
-        st.metric("📋 Silver Processed", f"{silver_processed:,}")
+    elif page == "Content Analytics":
+        render_content_analytics(dashboard)
     
-    with col2:
-        data_quality = (gold_total / max(silver_total, 1)) * 100
-        st.metric("✨ Data Quality", f"{data_quality:.1f}%")
-    
-    with col3:
-        # ES sync status
-        sync_rate = (es_total / max(gold_total, 1)) * 100 if gold_total > 0 else 0
-        st.metric("🔄 ES Sync", f"{sync_rate:.1f}%")
-    
-    with col4:
-        st.metric("🕐 Last Updated", datetime.now().strftime("%H:%M:%S"))
-    
-    # Status footer
-    st.markdown("---")
-    st.markdown("*Dashboard integrates PostgreSQL data pipeline with Elasticsearch search capabilities for comprehensive news analytics*")
+    # Footer
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Last Updated:** " + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    st.sidebar.markdown("**Data Source:** CNN Indonesia")
 
 if __name__ == "__main__":
     main()

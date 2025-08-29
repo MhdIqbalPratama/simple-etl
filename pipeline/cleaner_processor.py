@@ -126,7 +126,7 @@ class CleanerProcessor:
     def print_stats(self):
         """Print processor statistics"""
         runtime = datetime.now() - self.stats['start_time']
-        logger.info(f"📊 Cleaner Processor Stats - Runtime: {runtime}, "
+        logger.info(f"Cleaner Processor Stats - Runtime: {runtime}, "
                    f"Consumed: {self.stats['messages_consumed']}, "
                    f"Cleaned: {self.stats['messages_cleaned']}, "
                    f"Produced: {self.stats['messages_produced']}, "
@@ -143,7 +143,7 @@ class CleanerProcessor:
         self.kafka_service.close()
         
         self.print_stats()
-        logger.info("🛑 Cleaner processor stopped")
+        logger.info("Cleaner processor stopped")
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""

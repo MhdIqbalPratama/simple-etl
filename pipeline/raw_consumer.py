@@ -64,7 +64,7 @@ class RawConsumer:
                 topics=[self.kafka_service.topic_raw]
             )
 
-            logger.info(f"✅ Raw consumer initialized - Group: {group_id}, Topic: {self.kafka_service.topic_raw}")
+            logger.info(f"Raw consumer initialized - Group: {group_id}, Topic: {self.kafka_service.topic_raw}")
             return True
 
         except Exception as e:
@@ -103,7 +103,7 @@ class RawConsumer:
                     continue
 
             if articles:
-                inserted = self.pg_service.insert_bronze(articles)
+                inserted = self.pg_service.insert_bronze_lv(articles)
                 self.stats['bronze_inserted'] += inserted
                 logger.info(f"Inserted {inserted} records into bronze table")
                 return inserted

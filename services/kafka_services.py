@@ -59,13 +59,13 @@ class KafkaService:
                     num_partitions=3,
                     replication_factor=1,
                     config={'cleanup.policy': 'delete', 'retention.ms': '604800000'}  # 7 days
-                ),
-                NewTopic(
-                    topic=self.topic_clean,
-                    num_partitions=3,
-                    replication_factor=1,
-                    config={'cleanup.policy': 'delete', 'retention.ms': '2592000000'}  # 30 days
                 )
+            #     NewTopic(
+            #         topic=self.topic_clean,
+            #         num_partitions=3,
+            #         replication_factor=1,
+            #         config={'cleanup.policy': 'delete', 'retention.ms': '2592000000'}  # 30 days
+            #     )
             ]
             
             # Create topics
@@ -248,5 +248,4 @@ class KafkaService:
             self.producer = None
         
         logger.info("Kafka service closed")
-
 
